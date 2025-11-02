@@ -15,6 +15,7 @@ import argparse
 import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
+from omegaconf import OmegaConf
 
 from models.recursive_reasoning.trm import TinyRecursiveReasoningModel_ACTV1_Inner, TinyRecursiveReasoningModel_ACTV1Config
 
@@ -250,10 +251,13 @@ def main():
 
     args = parser.parse_args()
 
-    # Load config
+    # Load config using OmegaConf to resolve interpolations
     print(f"Loading config from {args.config}")
-    with open(args.config, 'r') as f:
-        cfg = yaml.safe_load(f)
+    cfg = OmegaConf.load(args.config)
+    # Resolve all interpolations (like ${.hidden_size})
+    OmegaConf.resolve(cfg)
+    # Convert to plain dict
+    cfg = OmegaConf.to_container(cfg, resolve=True)
 
     # Add required fields
     model_cfg = {
