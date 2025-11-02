@@ -33,8 +33,13 @@ def analyze_convergence(model_cfg, checkpoint_path=None, num_extra_cycles=5, bat
     # Create model config object
     config = TinyRecursiveReasoningModel_ACTV1Config(**model_cfg)
 
+    # Set device
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Using device: {device}")
+
     # Create model
     model = TinyRecursiveReasoningModel_ACTV1_Inner(config)
+    model = model.to(device)
     model.eval()
 
     # Load checkpoint if provided
@@ -53,7 +58,7 @@ def analyze_convergence(model_cfg, checkpoint_path=None, num_extra_cycles=5, bat
 
         if checkpoint_path:
             print(f"Loading checkpoint from {checkpoint_path}")
-            state_dict = torch.load(checkpoint_path, map_location='cpu')
+            state_dict = torch.load(checkpoint_path, map_location=device)
             # Handle wrapped state dict (e.g., from compiled models)
             if 'model' in state_dict:
                 state_dict = state_dict['model']
@@ -63,8 +68,8 @@ def analyze_convergence(model_cfg, checkpoint_path=None, num_extra_cycles=5, bat
     # Create dummy batch (random inputs for now)
     print(f"Creating dummy batch with size {batch_size}")
     batch = {
-        'inputs': torch.randint(0, model_cfg['vocab_size'], (batch_size, model_cfg['seq_len'])),
-        'puzzle_identifiers': torch.randint(0, model_cfg['num_puzzle_identifiers'], (batch_size,))
+        'inputs': torch.randint(0, model_cfg['vocab_size'], (batch_size, model_cfg['seq_len']), device=device),
+        'puzzle_identifiers': torch.randint(0, model_cfg['num_puzzle_identifiers'], (batch_size,), device=device)
     }
 
     # Initialize carry
