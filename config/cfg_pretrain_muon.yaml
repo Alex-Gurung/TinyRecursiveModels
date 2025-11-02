@@ -41,7 +41,7 @@ puzzle_emb_lr: 1e-2
 # Muon is used for 2D+ hidden weight matrices (transformer layers)
 # while AdamW handles 1D parameters (biases, norms)
 use_muon: True
-muon_lr: 2e-2  # Muon typically uses 10-20x higher LR than Adam
+muon_lr: 4e-3  # Muon typically uses 10-20x higher LR than Adam
 muon_momentum: 0.95  # Momentum for Muon (default from paper)
 muon_nesterov: True  # Use Nesterov acceleration
 muon_ns_steps: 5  # Newton-Schulz iteration steps for orthogonalization

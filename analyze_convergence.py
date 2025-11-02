@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
 
-from models.recursive_reasoning.trm import TinyRecursiveReasoningModel_ACTV1_Inner
+from models.recursive_reasoning.trm import TinyRecursiveReasoningModel_ACTV1_Inner, TinyRecursiveReasoningModel_ACTV1Config
 
 
 def analyze_convergence(model_cfg, checkpoint_path=None, num_extra_cycles=5, batch_size=16):
@@ -29,15 +29,35 @@ def analyze_convergence(model_cfg, checkpoint_path=None, num_extra_cycles=5, bat
         num_extra_cycles: How many extra H-cycles to run beyond configured amount
         batch_size: Batch size for dummy data
     """
+    # Create model config object
+    config = TinyRecursiveReasoningModel_ACTV1Config(**model_cfg)
+
     # Create model
-    model = TinyRecursiveReasoningModel_ACTV1_Inner(model_cfg)
+    model = TinyRecursiveReasoningModel_ACTV1_Inner(config)
     model.eval()
 
     # Load checkpoint if provided
     if checkpoint_path:
-        print(f"Loading checkpoint from {checkpoint_path}")
-        state_dict = torch.load(checkpoint_path, map_location='cpu')
-        model.load_state_dict(state_dict, strict=False)
+        # If directory provided, find the latest checkpoint
+        checkpoint_path = Path(checkpoint_path)
+        if checkpoint_path.is_dir():
+            checkpoints = list(checkpoint_path.glob('*.pt'))
+            if not checkpoints:
+                print(f"Warning: No .pt files found in {checkpoint_path}")
+                checkpoint_path = None
+            else:
+                # Get latest checkpoint (by modification time)
+                checkpoint_path = max(checkpoints, key=lambda p: p.stat().st_mtime)
+                print(f"Found checkpoint: {checkpoint_path}")
+
+        if checkpoint_path:
+            print(f"Loading checkpoint from {checkpoint_path}")
+            state_dict = torch.load(checkpoint_path, map_location='cpu')
+            # Handle wrapped state dict (e.g., from compiled models)
+            if 'model' in state_dict:
+                state_dict = state_dict['model']
+            model.load_state_dict(state_dict, strict=False)
+            print("✓ Checkpoint loaded successfully")
 
     # Create dummy batch (random inputs for now)
     print(f"Creating dummy batch with size {batch_size}")
