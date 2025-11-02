@@ -18,6 +18,7 @@ import hydra
 import pydantic
 from omegaconf import DictConfig
 from adam_atan2 import AdamATan2
+from torch.optim import Muon, AdamW
 
 from puzzle_dataset import PuzzleDataset, PuzzleDatasetConfig, PuzzleDatasetMetadata
 from utils.functions import load_model_class, get_model_source_path
@@ -66,6 +67,14 @@ class PretrainConfig(pydantic.BaseModel):
     puzzle_emb_lr: float
     puzzle_emb_weight_decay: float
 
+    # Muon optimizer (for 2D+ hidden weights)
+    use_muon: bool = False  # If True, use Muon for 2D+ parameters and AdamW for 1D parameters
+    muon_lr: float = 2e-2  # Muon typically uses 10-20x higher LR than Adam
+    muon_momentum: float = 0.95  # Muon momentum (default from paper)
+    muon_nesterov: bool = True  # Use Nesterov acceleration
+    muon_ns_steps: int = 5  # Newton-Schulz iteration steps
+    muon_backend: str = 'original'  # 'original' or 'match_rms_adamw'
+
     # Names
     project_name: Optional[str] = None
     run_name: Optional[str] = None
@@ -113,6 +122,36 @@ def create_dataloader(config: PretrainConfig, split: str, rank: int, world_size:
     return dataloader, dataset.metadata
 
 
+def categorize_parameters_by_dim(model: nn.Module, puzzle_emb_params: set):
+    """
+    Categorize model parameters by dimensionality for hybrid optimizer setup.
+
+    Args:
+        model: The neural network model
+        puzzle_emb_params: Set of parameter IDs that belong to puzzle embeddings
+
+    Returns:
+        tuple: (params_2d_plus, params_1d)
+            - params_2d_plus: Parameters with 2+ dimensions (hidden weights for Muon)
+            - params_1d: Parameters with 1 dimension (biases, norms for AdamW)
+    """
+    params_2d_plus = []  # Hidden weight matrices (for Muon)
+    params_1d = []       # Biases, layernorms, etc. (for AdamW)
+
+    for name, param in model.named_parameters():
+        # Skip puzzle embeddings (handled by separate optimizer)
+        if id(param) in puzzle_emb_params:
+            continue
+
+        # Categorize by dimensionality
+        if param.ndim >= 2:
+            params_2d_plus.append(param)
+        else:
+            params_1d.append(param)
+
+    return params_2d_plus, params_1d
+
+
 def create_model(config: PretrainConfig, train_metadata: PuzzleDatasetMetadata, rank: int, world_size: int):
     model_cfg = dict(
         **config.arch.__pydantic_extra__,  # type: ignore
@@ -145,19 +184,50 @@ def create_model(config: PretrainConfig, train_metadata: PuzzleDatasetMetadata, 
                     dist.broadcast(param, src=0)
 
     # Optimizers and lr
+    # Three possible setups:
+    # 1. No puzzle embeddings: Single optimizer for all params
+    # 2. Freeze weights: Only optimize puzzle embeddings
+    # 3. Full training: Multiple optimizers for different parameter groups
     if config.arch.puzzle_emb_ndim == 0:
-        optimizers = [
-            AdamATan2(
-                model.parameters(),
-                lr=0,  # Needs to be set by scheduler
-                weight_decay=config.weight_decay,
-                betas=(config.beta1, config.beta2)
-            )
-        ]
-        optimizer_lrs = [
-            config.lr
-        ]
+        # No puzzle embeddings - use single optimizer
+        if config.use_muon:
+            # Muon for 2D+ params, AdamW for 1D params
+            params_2d, params_1d = categorize_parameters_by_dim(model, set())
+            optimizers = [
+                Muon(
+                    params_2d,
+                    lr=0,  # Needs to be set by scheduler
+                    momentum=config.muon_momentum,
+                    nesterov=config.muon_nesterov,
+                    ns_steps=config.muon_ns_steps,
+                    backend=config.muon_backend
+                ),
+                AdamW(
+                    params_1d,
+                    lr=0,  # Needs to be set by scheduler
+                    weight_decay=config.weight_decay,
+                    betas=(config.beta1, config.beta2)
+                )
+            ]
+            optimizer_lrs = [
+                config.muon_lr,
+                config.lr
+            ]
+        else:
+            # Standard AdamATan2 for all params
+            optimizers = [
+                AdamATan2(
+                    model.parameters(),
+                    lr=0,  # Needs to be set by scheduler
+                    weight_decay=config.weight_decay,
+                    betas=(config.beta1, config.beta2)
+                )
+            ]
+            optimizer_lrs = [
+                config.lr
+            ]
     elif config.freeze_weights:
+        # Only optimize puzzle embeddings
         optimizers = [
             CastedSparseEmbeddingSignSGD_Distributed(
                 model.model.puzzle_emb.buffers(),  # type: ignore
@@ -170,24 +240,61 @@ def create_model(config: PretrainConfig, train_metadata: PuzzleDatasetMetadata, 
             config.puzzle_emb_lr
         ]
     else:
-        optimizers = [
-            CastedSparseEmbeddingSignSGD_Distributed(
-                model.model.puzzle_emb.buffers(),  # type: ignore
-                lr=0,  # Needs to be set by scheduler
-                weight_decay=config.puzzle_emb_weight_decay,
-                world_size=world_size
-            ),
-            AdamATan2(
-                model.parameters(),
-                lr=0,  # Needs to be set by scheduler
-                weight_decay=config.weight_decay,
-                betas=(config.beta1, config.beta2)
-            )
-        ]
-        optimizer_lrs = [
-            config.puzzle_emb_lr,
-            config.lr
-        ]
+        # Full training with puzzle embeddings
+        # Get puzzle embedding parameters for exclusion
+        puzzle_emb_param_ids = {id(p) for p in model.model.puzzle_emb.buffers()}  # type: ignore
+
+        if config.use_muon:
+            # Three-optimizer setup: SignSGD for embeddings, Muon for 2D weights, AdamW for 1D params
+            params_2d, params_1d = categorize_parameters_by_dim(model, puzzle_emb_param_ids)
+
+            optimizers = [
+                CastedSparseEmbeddingSignSGD_Distributed(
+                    model.model.puzzle_emb.buffers(),  # type: ignore
+                    lr=0,  # Needs to be set by scheduler
+                    weight_decay=config.puzzle_emb_weight_decay,
+                    world_size=world_size
+                ),
+                Muon(
+                    params_2d,
+                    lr=0,  # Needs to be set by scheduler
+                    momentum=config.muon_momentum,
+                    nesterov=config.muon_nesterov,
+                    ns_steps=config.muon_ns_steps,
+                    backend=config.muon_backend
+                ),
+                AdamW(
+                    params_1d,
+                    lr=0,  # Needs to be set by scheduler
+                    weight_decay=config.weight_decay,
+                    betas=(config.beta1, config.beta2)
+                )
+            ]
+            optimizer_lrs = [
+                config.puzzle_emb_lr,
+                config.muon_lr,
+                config.lr
+            ]
+        else:
+            # Two-optimizer setup: SignSGD for embeddings, AdamATan2 for model weights
+            optimizers = [
+                CastedSparseEmbeddingSignSGD_Distributed(
+                    model.model.puzzle_emb.buffers(),  # type: ignore
+                    lr=0,  # Needs to be set by scheduler
+                    weight_decay=config.puzzle_emb_weight_decay,
+                    world_size=world_size
+                ),
+                AdamATan2(
+                    model.parameters(),
+                    lr=0,  # Needs to be set by scheduler
+                    weight_decay=config.weight_decay,
+                    betas=(config.beta1, config.beta2)
+                )
+            ]
+            optimizer_lrs = [
+                config.puzzle_emb_lr,
+                config.lr
+            ]
 
     return model, optimizers, optimizer_lrs
 

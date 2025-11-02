@@ -1,0 +1,55 @@
+# ARC training config with Muon optimizer
+# Based on cfg_pretrain.yaml with optimizations for faster convergence
+
+defaults:
+  - arch: trm
+  - _self_
+
+hydra:
+  output_subdir: null
+
+# Data path
+data_paths: ['data/arc-aug-1000']
+data_paths_test: []
+
+evaluators:
+  - name: arc@ARC
+
+# Hyperparams - Training
+global_batch_size: 768
+
+epochs: 100000
+eval_interval: 10000
+checkpoint_every_eval: True
+
+# Learning rate schedule
+# Note: Muon uses higher LR than Adam (typically 10-20x)
+lr: 1e-4  # For AdamW (1D parameters like biases, layernorms)
+lr_min_ratio: 0.1  # Cosine decay to 10% (changed from 1.0 for better convergence)
+lr_warmup_steps: 2000
+
+# Standard hyperparameter settings for LM, as used in Llama
+beta1: 0.9
+beta2: 0.95
+weight_decay: 0.1
+puzzle_emb_weight_decay: 0.1
+
+# Hyperparams - Puzzle embeddings training
+puzzle_emb_lr: 1e-2
+
+# Muon optimizer settings
+# Muon is used for 2D+ hidden weight matrices (transformer layers)
+# while AdamW handles 1D parameters (biases, norms)
+use_muon: True
+muon_lr: 2e-2  # Muon typically uses 10-20x higher LR than Adam
+muon_momentum: 0.95  # Momentum for Muon (default from paper)
+muon_nesterov: True  # Use Nesterov acceleration
+muon_ns_steps: 5  # Newton-Schulz iteration steps for orthogonalization
+muon_backend: 'original'  # 'original' or 'match_rms_adamw'
+
+seed: 0
+min_eval_interval: 0 # when to start the eval
+
+ema: True  # Use Exponential-Moving-Average (recommended for better generalization)
+ema_rate: 0.999 # EMA-rate
+freeze_weights: False # If True, freeze weights and only learn the embeddings
