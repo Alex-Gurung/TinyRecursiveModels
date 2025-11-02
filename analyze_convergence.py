@@ -74,7 +74,10 @@ def analyze_convergence(model_cfg, checkpoint_path=None, num_extra_cycles=5, bat
 
     # Initialize carry
     carry = model.empty_carry(batch_size)
-    carry = model.reset_carry(torch.ones(batch_size, dtype=torch.bool), carry)
+    # Move carry tensors to device
+    carry.z_H = carry.z_H.to(device)
+    carry.z_L = carry.z_L.to(device)
+    carry = model.reset_carry(torch.ones(batch_size, dtype=torch.bool, device=device), carry)
 
     # Track convergence
     z_L_history = []
