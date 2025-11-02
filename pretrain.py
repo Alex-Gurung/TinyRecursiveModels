@@ -72,7 +72,7 @@ class PretrainConfig(pydantic.BaseModel):
     muon_momentum: float = 0.95  # Muon momentum (default from paper)
     muon_nesterov: bool = True  # Use Nesterov acceleration
     muon_ns_steps: int = 5  # Newton-Schulz iteration steps
-    muon_backend: str = 'original'  # 'original' or 'match_rms_adamw'
+    muon_adjust_lr_fn: Optional[str] = None  # Optional LR adjustment: None or 'match_rms_adamw'
 
     # Names
     project_name: Optional[str] = None
@@ -229,7 +229,7 @@ def create_model(config: PretrainConfig, train_metadata: PuzzleDatasetMetadata, 
                     momentum=config.muon_momentum,
                     nesterov=config.muon_nesterov,
                     ns_steps=config.muon_ns_steps,
-                    backend=config.muon_backend
+                    adjust_lr_fn=config.muon_adjust_lr_fn
                 ),
                 AdamW(
                     params_1d,

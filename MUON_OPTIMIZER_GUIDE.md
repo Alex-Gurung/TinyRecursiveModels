@@ -134,7 +134,7 @@ python pretrain.py arch=trm data_paths="[data/arc-aug-1000]"
 | `muon_momentum` | `0.95` | Momentum coefficient (default from Muon paper) |
 | `muon_nesterov` | `True` | Use Nesterov momentum acceleration |
 | `muon_ns_steps` | `5` | Newton-Schulz orthogonalization iteration steps |
-| `muon_backend` | `'original'` | Backend: `'original'` or `'match_rms_adamw'` |
+| `muon_adjust_lr_fn` | `null` | Optional LR adjustment: `null` or `'match_rms_adamw'` |
 
 ### Other Important Settings
 
@@ -178,7 +178,7 @@ The provided config should work well out-of-the-box:
 ### If Training is Unstable
 1. **Lower Muon LR:** Try `muon_lr=1e-2` or `1.5e-2`
 2. **Increase warmup:** Try `lr_warmup_steps=4000` or `5000`
-3. **Try different backend:** `muon_backend='match_rms_adamw'` for better AdamW compatibility
+3. **Try LR adjustment:** `muon_adjust_lr_fn='match_rms_adamw'` for better AdamW compatibility
 
 ### If Training is Too Slow
 1. **Increase batch size:** Try `global_batch_size=1024` or `1536` (Muon handles large batches well)

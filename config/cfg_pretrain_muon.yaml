@@ -45,7 +45,7 @@ muon_lr: 2e-2  # Muon typically uses 10-20x higher LR than Adam
 muon_momentum: 0.95  # Momentum for Muon (default from paper)
 muon_nesterov: True  # Use Nesterov acceleration
 muon_ns_steps: 5  # Newton-Schulz iteration steps for orthogonalization
-muon_backend: 'original'  # 'original' or 'match_rms_adamw'
+muon_adjust_lr_fn: null  # Optional LR adjustment: null or 'match_rms_adamw'
 
 seed: 0
 min_eval_interval: 0 # when to start the eval
